@@ -1,0 +1,4 @@
+interface:
+  display_name: "Writing AI and ML Papers"
+  short_description: "Draft rigorous, evidence grounded AI and ML papers"
+  default_prompt: "Use $writing-ai-ml-papers to draft a rigorous AI or ML paper from my evidence."
