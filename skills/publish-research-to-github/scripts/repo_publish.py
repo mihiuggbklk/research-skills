@@ -76,6 +76,7 @@ SMALL_DATA_EXTENSIONS = {".csv", ".tsv", ".json", ".dat"}
 REPOSITORY_FILENAMES = {
     ".gitignore",
     ".gitattributes",
+    ".gitmodules",
     ".editorconfig",
     ".env.example",
     "citation.cff",
@@ -177,8 +178,21 @@ BLOCKED_CREDENTIAL_NAMES = {
     "service-account.json",
 }
 BLOCKED_CREDENTIAL_DIRECTORIES = {"credentials", "private", "secrets"}
+BLOCKED_ARTIFACT_DIRECTORIES = {"checkpoint", "checkpoints", "weight", "weights"}
 RAW_DATA_DIRECTORIES = {"data", "dataset", "datasets"}
-RESULT_DIRECTORIES = {"logs", "outputs", "results"}
+PUBLISH_EXCLUDED_DIRECTORIES = {
+    "artifact",
+    "artifacts",
+    "evidence",
+    "log",
+    "logs",
+    "output",
+    "outputs",
+    "result",
+    "results",
+    "run_state",
+    "run_states",
+}
 SECRET_PATTERNS = (
     ("private key", re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----")),
     ("GitHub token", re.compile(r"\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}\b")),
@@ -191,6 +205,10 @@ SECRET_PATTERNS = (
             r"(?!your[_-]|example|changeme|replace[_-]|dummy)[A-Za-z0-9_./+=-]{12,}"
         ),
     ),
+)
+NOTEBOOK_MACHINE_PATH_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/]"),
+    re.compile(r"(?<![A-Za-z0-9_])/(?:home|Users)/[^/\s\"']+"),
 )
 
 
@@ -249,6 +267,84 @@ def _category_for(path: PurePosixPath) -> tuple[str, str] | None:
     return None
 
 
+def _string_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _string_values(key)
+            yield from _string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_values(item)
+
+
+def _notebook_content_reason(data: bytes) -> str | None:
+    """Return a publish block reason for malformed or private notebook content."""
+    try:
+        notebook = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        return f"Notebook is not valid UTF-8 JSON: {exc.__class__.__name__}"
+    if not isinstance(notebook, dict):
+        return "Notebook root must be a JSON object"
+    nbformat = notebook.get("nbformat")
+    nbformat_minor = notebook.get("nbformat_minor")
+    if type(nbformat) is not int or nbformat < 4:
+        return "Notebook nbformat must be an integer of at least 4"
+    if type(nbformat_minor) is not int or nbformat_minor < 0:
+        return "Notebook nbformat_minor must be a non-negative integer"
+    metadata = notebook.get("metadata")
+    if not isinstance(metadata, dict):
+        return "Notebook metadata must be a JSON object"
+    if "widgets" in metadata:
+        return "Notebook contains saved widget output state; clear widget metadata"
+    cells = notebook.get("cells")
+    if not isinstance(cells, list):
+        return "Notebook has no valid cells list"
+    public_cells: list[dict[str, Any]] = []
+    for index, cell in enumerate(cells):
+        if not isinstance(cell, dict):
+            return f"Notebook cell {index} must be a JSON object"
+        cell_type = cell.get("cell_type")
+        if cell_type not in {"code", "markdown", "raw"}:
+            return f"Notebook cell {index} has an invalid cell_type"
+        cell_metadata = cell.get("metadata")
+        if not isinstance(cell_metadata, dict):
+            return f"Notebook cell {index} metadata must be a JSON object"
+        source = cell.get("source")
+        if isinstance(source, str):
+            joined_source = source
+        elif isinstance(source, list) and all(isinstance(item, str) for item in source):
+            joined_source = "".join(source)
+        else:
+            return f"Notebook cell {index} source must be a string or list of strings"
+        if cell_type == "code":
+            if cell.get("outputs") != []:
+                return f"Notebook saved execution outputs in code cell {index} must be an empty list"
+            if "execution_count" not in cell or cell["execution_count"] is not None:
+                return f"Notebook saved execution_count in code cell {index} must be null"
+        public_cells.append({"metadata": cell_metadata, "source": joined_source})
+    public_content = {
+        "metadata": metadata,
+        "cells": public_cells,
+    }
+    if any(
+        pattern.search(value)
+        for value in _string_values(public_content)
+        for pattern in NOTEBOOK_MACHINE_PATH_PATTERNS
+    ):
+        return "Notebook contains a machine-specific local path; replace it with a portable setting"
+    return None
+
+
+def _notebook_saved_state_reason(path: Path) -> str | None:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        return f"Notebook cannot be read: {exc.__class__.__name__}"
+    return _notebook_content_reason(data)
+
+
 def classify_path(
     repo: Path | str,
     relative: str,
@@ -278,6 +374,8 @@ def classify_path(
         return FileDecision(normalised, "block", "Credential environment file", "blocked", "", tracked)
     if name in BLOCKED_CREDENTIAL_NAMES or any(part in BLOCKED_CREDENTIAL_DIRECTORIES for part in lower_parts[:-1]):
         return FileDecision(normalised, "block", "Credential or private material path", "blocked", "", tracked)
+    if any(part in BLOCKED_ARTIFACT_DIRECTORIES for part in lower_parts[:-1]):
+        return FileDecision(normalised, "block", "Checkpoint or model-weight directory", "blocked", "", tracked)
     if suffix in BLOCKED_ARTIFACT_EXTENSIONS:
         return FileDecision(normalised, "block", "Dataset, model weight, or checkpoint artifact", "blocked", "", tracked)
     if suffix in SMALL_DATA_EXTENSIONS and any(part in RAW_DATA_DIRECTORIES for part in lower_parts[:-1]):
@@ -287,8 +385,19 @@ def classify_path(
         return FileDecision(normalised, "exclude", "Generated, cache, or local directory", "excluded", "", tracked)
     if normalised.lower().endswith((".synctex.gz", ".run.xml")) or suffix in EXCLUDED_EXTENSIONS:
         return FileDecision(normalised, "exclude", "Generated or temporary file", "excluded", "", tracked)
-    if any(part in RESULT_DIRECTORIES for part in lower_parts[:-1]) and suffix in {".log", ".txt", ".json"}:
-        return FileDecision(normalised, "exclude", "Generated experiment result or log", "excluded", "", tracked)
+    if any(part in PUBLISH_EXCLUDED_DIRECTORIES for part in lower_parts[:-1]):
+        return FileDecision(
+            normalised,
+            "exclude",
+            "Generated result, evidence, artifact, or output directory",
+            "excluded",
+            "",
+            tracked,
+        )
+    if suffix == ".ipynb" and candidate.exists() and candidate.is_file():
+        notebook_reason = _notebook_saved_state_reason(candidate)
+        if notebook_reason:
+            return FileDecision(normalised, "block", notebook_reason, "blocked", "", tracked)
     if _plan_markdown(pure):
         return FileDecision(normalised, "exclude", "AI planning or process Markdown", "excluded", "", tracked)
 
@@ -299,8 +408,6 @@ def classify_path(
 
 
 def _scan_secret_bytes(data: bytes) -> str | None:
-    if b"\x00" in data:
-        return None
     text = data.decode("utf-8", errors="replace")
     for label, pattern in SECRET_PATTERNS:
         if pattern.search(text):
@@ -360,45 +467,78 @@ def validate_readme(text: str) -> None:
         raise PublishError("README.md must link to FILES.md")
 
 
-def validate_commit_message(message: str, changes: dict[str, list[str]]) -> None:
-    text = message.strip()
-    if not text:
+def _commit_message_lines(message: str) -> list[str]:
+    if message.startswith("\ufeff"):
+        raise PublishError("Commit message must be UTF-8 without a BOM")
+    if "\r" in message:
+        raise PublishError("Commit message must use LF-only line endings")
+    if not message.endswith("\n"):
+        raise PublishError("Commit message must end with a terminal LF")
+    if message.endswith("\n\n"):
+        raise PublishError("Commit message must have exactly one terminal LF")
+    body = message[:-1]
+    if not body:
         raise PublishError("Commit message is empty")
-    subject = text.splitlines()[0].strip()
+    if not body.rsplit("\n", 1)[-1].strip():
+        raise PublishError("Commit message must not contain a blank terminal line")
+    return body.split("\n")
+
+
+def validate_commit_message(message: str, changes: dict[str, list[str]]) -> None:
+    lines = _commit_message_lines(message)
+    subject = lines[0]
+    if not subject:
+        raise PublishError("Commit subject must not be empty")
+    if subject != subject.strip():
+        raise PublishError("Commit subject must not have surrounding whitespace")
     if len(subject) > 72:
         raise PublishError("Commit subject must be at most 72 characters")
     if subject.lower() in {"update", "update files", "changes", "misc changes"}:
         raise PublishError("Commit subject is too generic")
-    secret_rule = _scan_secret_bytes(text.encode("utf-8"))
+    secret_rule = _scan_secret_bytes(message.encode("utf-8"))
     if secret_rule:
         raise PublishError(f"Commit message matched secret rule: {secret_rule}")
-    section_match = re.search(
-        r"(?ms)^Files:\s*(?P<files>.*?)^Changes:\s*(?P<changes>.*?)^Features:\s*(?P<features>.*)$",
-        text,
-    )
-    if not section_match:
-        raise PublishError("Commit message must contain Files, Changes, and Features sections")
-    if not section_match.group("changes").strip(" \r\n-"):
-        raise PublishError("Changes section must describe the implementation")
-    if not section_match.group("features").strip(" \r\n-"):
-        raise PublishError("Features section must describe functionality")
-    files_section = section_match.group("files")
+
+    if len(lines) < 12 or lines[1] != "" or lines[2] != "Files:":
+        raise PublishError("Commit message must start with a subject, blank line, and Files section")
+    files_lines = lines[3:6]
+    if len(files_lines) != 3 or lines[6] != "":
+        raise PublishError("Files section must contain exactly three entries followed by a blank line")
+    if lines[7] != "Changes:":
+        raise PublishError("Changes section must immediately follow the Files section")
+    index = 8
+    change_lines: list[str] = []
+    while index < len(lines) and lines[index] != "":
+        change_lines.append(lines[index])
+        index += 1
+    if not change_lines or any(not line.startswith("- ") or not line[2:].strip() for line in change_lines):
+        raise PublishError("Changes section must contain one or more non-empty bullet lines")
+    if index >= len(lines) or lines[index] != "":
+        raise PublishError("Changes section must be followed by a blank line")
+    index += 1
+    if index >= len(lines) or lines[index] != "Features:":
+        raise PublishError("Features section must immediately follow the Changes section")
+    feature_lines = lines[index + 1 :]
+    if not feature_lines or any(not line.startswith("- ") or not line[2:].strip() for line in feature_lines):
+        raise PublishError("Features section must contain one or more non-empty bullet lines")
+
     parsed: dict[str, list[str]] = {}
-    nonempty_lines = [line.strip() for line in files_section.splitlines() if line.strip()]
-    if len(nonempty_lines) != 3:
-        raise PublishError("Files section must contain exactly Added, Modified, and Deleted entries")
-    for label, key in (("Added", "added"), ("Modified", "modified"), ("Deleted", "deleted")):
-        matches = [
-            match
-            for line in nonempty_lines
-            if (match := re.fullmatch(rf"-\s*{label}:\s*(.+)", line, flags=re.IGNORECASE))
-        ]
-        if len(matches) != 1:
-            raise PublishError(f"Files section must contain exactly one {label} entry")
-        raw_value = matches[0].group(1).strip()
+    for line, (label, key) in zip(
+        files_lines,
+        (("Added", "added"), ("Modified", "modified"), ("Deleted", "deleted")),
+        strict=True,
+    ):
+        match = re.fullmatch(rf"- {label}: (.+)", line)
+        if not match:
+            raise PublishError(f"Files section must contain an exact '- {label}: ...' entry")
+        raw_value = match.group(1).strip()
+        if not raw_value:
+            raise PublishError(f"{label} file list must use None when it is empty")
         if raw_value.casefold() == "none":
             parsed[key] = []
             continue
+        if ";" in raw_value:
+            raise PublishError(f"{label} file paths must be separated with commas, not semicolons")
         try:
             raw_paths = next(csv.reader([raw_value], skipinitialspace=True))
         except csv.Error as exc:
@@ -418,6 +558,22 @@ def validate_commit_message(message: str, changes: dict[str, list[str]]) -> None
         raise PublishError(f"Commit file lists do not match staged changes: expected {expected}, got {parsed}")
 
 
+def read_commit_message_file(path: Path | str) -> str:
+    message_path = Path(path)
+    try:
+        data = message_path.read_bytes()
+    except OSError as exc:
+        raise PublishError(f"Unable to read commit message file: {exc.__class__.__name__}") from exc
+    if data.startswith(b"\xef\xbb\xbf"):
+        raise PublishError("Commit message must be UTF-8 without a BOM")
+    try:
+        message = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PublishError("Commit message must be valid UTF-8") from exc
+    _commit_message_lines(message)
+    return message
+
+
 def _redact(text: str) -> str:
     redacted = re.sub(r"(?i)(https?://)[^/@\s]+@", r"\1***@", text)
     for _, pattern in SECRET_PATTERNS:
@@ -431,15 +587,18 @@ def _git(
     check: bool = True,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    process = subprocess.run(
+    raw_process = subprocess.run(
         ["git", *args],
         cwd=repo,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        input=input_text,
+        input=input_text.encode("utf-8") if input_text is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+    )
+    process = subprocess.CompletedProcess(
+        raw_process.args,
+        raw_process.returncode,
+        raw_process.stdout.decode("utf-8", errors="replace"),
+        raw_process.stderr.decode("utf-8", errors="replace"),
     )
     if check and process.returncode != 0:
         detail = _redact(process.stderr or process.stdout) or f"exit code {process.returncode}"
@@ -480,6 +639,72 @@ def _operation_in_progress(repo: Path) -> str | None:
     return None
 
 
+def _gitlink_paths(repo: Path) -> list[str]:
+    paths: list[str] = []
+    output = _git(repo, "ls-files", "--stage", "-z").stdout
+    for record in output.split("\0"):
+        if not record or "\t" not in record:
+            continue
+        metadata, raw_path = record.split("\t", 1)
+        if metadata.split(maxsplit=1)[0] == "160000":
+            paths.append(_normalise(raw_path))
+    return sorted(paths, key=str.casefold)
+
+
+def _skip_worktree_paths(repo: Path) -> list[str]:
+    paths = []
+    for record in _git(repo, "ls-files", "-v", "-z").stdout.split("\0"):
+        if (
+            len(record) >= 3
+            and record[1] == " "
+            and (record[0].upper() == "S" or record[0].islower())
+        ):
+            paths.append(_normalise(record[2:]))
+    return sorted(paths, key=str.casefold)
+
+
+def _gitmodule_paths(repo: Path) -> set[str]:
+    result = _git(
+        repo,
+        "config",
+        "--file",
+        ".gitmodules",
+        "--get-regexp",
+        r"^submodule\..*\.path$",
+        check=False,
+    )
+    if result.returncode == 1:
+        return set()
+    if result.returncode != 0:
+        detail = _redact(result.stderr or result.stdout) or f"exit code {result.returncode}"
+        raise PublishError(f"Unable to parse .gitmodules: {detail}")
+    paths: set[str] = set()
+    for line in result.stdout.splitlines():
+        _, separator, raw_path = line.partition(" ")
+        if not separator or not raw_path.strip():
+            raise PublishError("Unable to parse .gitmodules path mapping")
+        paths.add(_normalise(raw_path.strip()))
+    return paths
+
+
+def _validate_root_makefile(repo: Path) -> None:
+    makefile = repo / "Makefile"
+    tracked = _git(repo, "ls-files", "--error-unmatch", "--", "Makefile", check=False)
+    if tracked.returncode not in (0, 1):
+        raise PublishError("Unable to determine whether the root Makefile is tracked")
+    if tracked.returncode == 0 and not makefile.is_file():
+        raise PublishError("Root Makefile is missing from the working tree")
+    if not makefile.exists():
+        return
+    if not makefile.is_file():
+        raise PublishError("Root Makefile must be a regular file")
+    ignored = _git(repo, "check-ignore", "-v", "--no-index", "--", "Makefile", check=False)
+    if ignored.returncode == 0:
+        raise PublishError("Root Makefile is ignored; remove the matching ignore rule before publishing")
+    if ignored.returncode != 1:
+        raise PublishError("Unable to verify whether the root Makefile is ignored")
+
+
 def validate_repository(repo: Path | str, remote: str = "origin") -> tuple[Path, str]:
     root = _repository_root(repo)
     branch_result = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
@@ -488,6 +713,13 @@ def validate_repository(repo: Path | str, remote: str = "origin") -> tuple[Path,
     branch = branch_result.stdout.strip()
     if _git(root, "remote", "get-url", remote, check=False).returncode != 0:
         raise PublishError(f"Git remote '{remote}' is not configured")
+    skip_worktree = _skip_worktree_paths(root)
+    if skip_worktree:
+        raise PublishError(
+            "Sparse, skip-worktree, or assume-unchanged index entries are not publishable: "
+            + ", ".join(skip_worktree)
+        )
+    _validate_root_makefile(root)
     conflicts = _git(root, "diff", "--name-only", "--diff-filter=U", "-z").stdout
     if conflicts:
         raise PublishError("Resolve merge conflicts before publishing")
@@ -497,9 +729,25 @@ def validate_repository(repo: Path | str, remote: str = "origin") -> tuple[Path,
     staged = _git(root, "diff", "--cached", "--name-only", "-z").stdout
     if staged:
         raise PublishError("Pre-existing staged changes detected; clear or commit them before publishing")
+    gitlinks = _gitlink_paths(root)
+    if gitlinks:
+        if not (root / ".gitmodules").is_file():
+            raise PublishError(
+                "Gitlink entries exist without .gitmodules: " + ", ".join(gitlinks)
+            )
+        mapped_paths = _gitmodule_paths(root)
+        missing_mappings = [path for path in gitlinks if path not in mapped_paths]
+        if missing_mappings:
+            raise PublishError(
+                ".gitmodules does not map Gitlink entries: " + ", ".join(missing_mappings)
+            )
+        raise PublishError(
+            "Gitlink entries are not publishable in a source snapshot: " + ", ".join(gitlinks)
+        )
     submodules = _git(root, "submodule", "status", "--recursive", check=False)
     if submodules.returncode not in (0, 1):
-        raise PublishError("Unable to inspect Git submodules")
+        detail = _redact(submodules.stderr or submodules.stdout)
+        raise PublishError(f"Unable to inspect Git submodules: {detail or 'unknown error'}")
     dirty_submodules = [line for line in submodules.stdout.splitlines() if line and line[0] in "+-U"]
     if dirty_submodules:
         raise PublishError("Dirty, conflicted, or uninitialized submodule detected")
@@ -514,7 +762,7 @@ def _untracked_paths(repo: Path) -> set[str]:
     return set(_nul_paths(_git(repo, "ls-files", "--others", "--exclude-standard", "-z").stdout))
 
 
-def _outbound_revision(repo: Path, remote: str, branch: str) -> str | None:
+def _remote_branch_tip(repo: Path, remote: str, branch: str) -> str | None:
     remote_ref = f"refs/heads/{branch}"
     result = _git(repo, "ls-remote", "--heads", remote, remote_ref, check=False)
     if result.returncode != 0:
@@ -528,6 +776,11 @@ def _outbound_revision(repo: Path, remote: str, branch: str) -> str | None:
         remote_tip = lines[0].split("\t", 1)[0].strip()
         if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", remote_tip):
             raise PublishError(f"Remote branch '{remote}/{branch}' returned an invalid object ID")
+    return remote_tip
+
+
+def _outbound_revision(repo: Path, remote: str, branch: str) -> str | None:
+    remote_tip = _remote_branch_tip(repo, remote, branch)
 
     has_head = _git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode == 0
     if not has_head:
@@ -560,6 +813,91 @@ def _read_blob(repo: Path, object_id: str) -> bytes:
     return process.stdout
 
 
+def _tree_entries(repo: Path, treeish: str) -> list[tuple[str, str, str, int | None, str]]:
+    entries: list[tuple[str, str, str, int | None, str]] = []
+    output = _git(repo, "ls-tree", "-r", "-z", "-l", treeish).stdout
+    for record in output.split("\0"):
+        if not record or "\t" not in record:
+            continue
+        metadata, raw_path = record.split("\t", 1)
+        parts = metadata.split()
+        if len(parts) != 4:
+            raise PublishError(f"Unable to parse Git tree entry for {_normalise(raw_path)}")
+        mode, object_type, object_id, raw_size = parts
+        size = int(raw_size) if raw_size.isdigit() else None
+        entries.append((mode, object_type, object_id, size, _normalise(raw_path)))
+    return entries
+
+
+def _scan_git_tree(
+    repo: Path,
+    treeish: str,
+    *,
+    max_size_bytes: int,
+) -> list[str]:
+    findings: set[str] = set()
+    blob_cache: dict[str, bytes] = {}
+    for mode, object_type, object_id, size, path in _tree_entries(repo, treeish):
+        if mode == "160000" or object_type == "commit":
+            findings.add(f"{path} (gitlink is not publishable)")
+            continue
+        if object_type != "blob" or mode not in {"100644", "100755", "120000"}:
+            findings.add(f"{path} (unsupported Git tree entry mode {mode})")
+            continue
+        decision = classify_path(
+            repo,
+            path,
+            tracked=True,
+            max_size_bytes=max_size_bytes,
+        )
+        if decision.action != "include":
+            findings.add(f"{path} ({decision.reason})")
+        if size is None or size > max_size_bytes:
+            findings.add(f"{path} (Git blob exceeds publication size limit)")
+            continue
+        if object_id not in blob_cache:
+            blob_cache[object_id] = _read_blob(repo, object_id)
+        blob = blob_cache[object_id]
+        secret_rule = _scan_secret_bytes(blob)
+        if secret_rule:
+            findings.add(f"{path} (secret rule: {secret_rule})")
+        if PurePosixPath(path).suffix.lower() == ".ipynb":
+            notebook_reason = _notebook_content_reason(blob)
+            if notebook_reason:
+                findings.add(f"{path} ({notebook_reason})")
+        if mode == "120000":
+            try:
+                target = blob.decode("utf-8")
+            except UnicodeDecodeError:
+                findings.add(f"{path} (symlink target is not valid UTF-8)")
+                continue
+            candidate = repo.joinpath(*PurePosixPath(path).parts).parent / target
+            try:
+                candidate.resolve(strict=False).relative_to(repo)
+            except ValueError:
+                findings.add(f"{path} (symlink resolves outside repository)")
+    return sorted(findings, key=str.casefold)
+
+
+def _read_committed_message(repo: Path, commit: str) -> str:
+    process = subprocess.run(
+        ["git", "cat-file", "commit", commit],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.returncode != 0:
+        detail = _redact(process.stderr.decode("utf-8", errors="replace"))
+        raise PublishError(f"Unable to inspect committed message: {detail or 'unknown error'}")
+    _, separator, message = process.stdout.partition(b"\n\n")
+    if not separator:
+        raise PublishError("Unable to locate the committed message")
+    try:
+        return message.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PublishError("Committed message is not valid UTF-8") from exc
+
+
 def scan_outbound_history(
     repo: Path | str,
     *,
@@ -578,6 +916,24 @@ def scan_outbound_history(
     if message_rule:
         findings.add(f"outbound commit message (secret rule: {message_rule})")
 
+    tree_notebook_paths: dict[str, set[str]] = {}
+    for commit in _git(root, "rev-list", revision).stdout.splitlines():
+        tree = _git(root, "ls-tree", "-r", "-z", commit).stdout
+        for record in tree.split("\0"):
+            if not record or "\t" not in record:
+                continue
+            metadata, raw_path = record.split("\t", 1)
+            parts = metadata.split()
+            path = _normalise(raw_path)
+            if parts and parts[0] == "160000":
+                findings.add(f"{path} (historical gitlink is not publishable)")
+            elif (
+                len(parts) >= 3
+                and parts[1] == "blob"
+                and PurePosixPath(path).suffix.lower() == ".ipynb"
+            ):
+                tree_notebook_paths.setdefault(parts[2], set()).add(path)
+
     object_lines = _git(root, "rev-list", "--objects", revision).stdout.splitlines()
     object_paths: dict[str, set[str]] = {}
     for line in object_lines:
@@ -590,6 +946,9 @@ def scan_outbound_history(
             findings.add("outbound history contains an unsafe repository path")
             continue
         object_paths.setdefault(object_id, set()).add(path)
+    for object_id, paths in tree_notebook_paths.items():
+        if object_id in object_paths:
+            object_paths[object_id].update(paths)
     if not object_paths:
         return sorted(findings, key=str.casefold)
 
@@ -616,7 +975,13 @@ def scan_outbound_history(
             if size > max_size_bytes:
                 findings.add(f"{path} (historical blob exceeds publication size limit)")
         if size <= max_size_bytes:
-            secret_rule = _scan_secret_bytes(_read_blob(root, object_id))
+            blob = _read_blob(root, object_id)
+            for path in paths:
+                if PurePosixPath(path).suffix.lower() == ".ipynb":
+                    notebook_reason = _notebook_content_reason(blob)
+                    if notebook_reason:
+                        findings.add(f"{path} (historical notebook: {notebook_reason})")
+            secret_rule = _scan_secret_bytes(blob)
             if secret_rule:
                 for path in paths:
                     findings.add(f"{path} (historical secret rule: {secret_rule})")
@@ -631,16 +996,28 @@ def discover_repository(
     root = _repository_root(repo)
     tracked_paths = _tracked_paths(root)
     paths = tracked_paths | _untracked_paths(root) | {"FILES.md"}
+    if "Makefile" in tracked_paths or (root / "Makefile").exists():
+        paths.add("Makefile")
     decisions: list[FileDecision] = []
     for path in sorted(paths, key=str.casefold):
         tracked = path in tracked_paths
-        decision = classify_path(
-            root,
-            path,
-            tracked=tracked,
-            max_size_bytes=max_size_bytes,
-        )
         candidate = root.joinpath(*PurePosixPath(path).parts)
+        if tracked and not candidate.exists() and not candidate.is_symlink():
+            decision = FileDecision(
+                path,
+                "exclude",
+                "Tracked file is deleted from the working tree",
+                "excluded",
+                "",
+                True,
+            )
+        else:
+            decision = classify_path(
+                root,
+                path,
+                tracked=tracked,
+                max_size_bytes=max_size_bytes,
+            )
         if decision.action == "include" and candidate.exists() and candidate.is_file():
             secret_rule = scan_secret(candidate, max_bytes=max_size_bytes)
             if secret_rule:
@@ -677,9 +1054,13 @@ def _diff_paths(repo: Path, diff_filter: str) -> set[str]:
     return set(_nul_paths(output))
 
 
-def collect_changes(repo: Path | str) -> dict[str, list[str]]:
+def collect_changes(
+    repo: Path | str,
+    *,
+    max_size_bytes: int = DEFAULT_MAX_SIZE_BYTES,
+) -> dict[str, list[str]]:
     root = _repository_root(repo)
-    decisions = discover_repository(root)
+    decisions = discover_repository(root, max_size_bytes=max_size_bytes)
     included = {item.path for item in decisions if item.action == "include"}
     tracked_removals = {
         item.path
@@ -735,7 +1116,7 @@ def prepare_repository(
     decisions = discover_repository(root, max_size_bytes=max_size_bytes)
     if any(item.action == "block" for item in decisions):
         raise PublishError(_blocked_message(decisions))
-    changes = collect_changes(root)
+    changes = collect_changes(root, max_size_bytes=max_size_bytes)
     return {
         "ok": True,
         "phase": "prepare",
@@ -835,29 +1216,65 @@ def publish_repository(
     changes = prepared["changes"]
     if not any(changes.values()):
         raise PublishError("No publishable changes found; no commit was created")
-    message = message_path.read_text(encoding="utf-8", errors="replace")
+    message = read_commit_message_file(message_path)
     validate_commit_message(message, changes)
 
     remove_from_git = set(prepared["remove_from_git"])
     _stage_exact(root, changes, remove_from_git)
     staged_changes = _cached_changes(root)
     validate_commit_message(message, staged_changes)
+    staged_tree = _git(root, "write-tree").stdout.strip()
+    staged_findings = _scan_git_tree(
+        root,
+        staged_tree,
+        max_size_bytes=max_size_bytes,
+    )
+    if staged_findings:
+        _git(root, "reset", "--quiet", check=False)
+        raise PublishError("Publication blocked by staged tree: " + "; ".join(staged_findings))
     whitespace = _git(root, "diff", "--cached", "--check", check=False)
     if whitespace.returncode != 0:
         _git(root, "reset", "--quiet", check=False)
         raise PublishError(f"Staged diff failed whitespace validation: {_redact(whitespace.stdout)}")
 
-    _git(root, "commit", "-F", "-", input_text=message)
+    _git(root, "commit", "--cleanup=verbatim", "-F", "-", input_text=message)
     commit = _git(root, "rev-parse", "HEAD").stdout.strip()
+    tree = _git(root, "rev-parse", "HEAD^{tree}").stdout.strip()
+    committed_findings = _scan_git_tree(
+        root,
+        tree,
+        max_size_bytes=max_size_bytes,
+    )
+    if committed_findings:
+        raise PublishError(
+            f"Commit {commit} was created locally, but committed tree failed publication scan: "
+            + "; ".join(committed_findings)
+        )
+    if tree != staged_tree:
+        raise PublishError(
+            f"Commit {commit} was created locally, but committed tree differs from the approved staged tree"
+        )
+    if _read_committed_message(root, commit) != message:
+        raise PublishError(
+            f"Commit {commit} was created locally, but commit message differs from the approved message"
+        )
     branch = prepared["branch"]
     try:
         _git(root, "push", "--porcelain", "--set-upstream", remote, f"HEAD:refs/heads/{branch}")
     except PublishError as exc:
         raise PublishError(f"Commit {commit} was created locally, but push failed: {exc}") from exc
+    remote_commit = _remote_branch_tip(root, remote, branch)
+    if remote_commit != commit:
+        raise PublishError(
+            f"Push returned successfully, but remote '{remote}/{branch}' is at {remote_commit or 'no commit'} "
+            f"instead of {commit}"
+        )
     return {
         "ok": True,
         "phase": "publish",
         "commit": commit,
+        "remote_commit": remote_commit,
+        "tree": tree,
         "remote": remote,
         "branch": branch,
         "changes": staged_changes,

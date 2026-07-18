@@ -1,111 +1,170 @@
 ---
 name: publish-research-to-github
-description: Use when publishing a research repository to GitHub that contains papers, LaTeX sources, PDFs, figures, compilation assets, or experiment code and requires README.md, FILES.md, and a detailed commit record.
+description: Use when publishing a research repository to GitHub that contains papers, LaTeX/PDF assets, figures, experiment code, generated result directories, checkpoints, notebooks, or dirty Git history and needs a safe allowlist, FILES.md, and an audited commit/push.
 ---
 
 # Publish Research To GitHub
 
-Use this skill when the user asks to upload or publish a paper project, LaTeX article, compiled PDF, paper figures, build inputs, or experiment code to GitHub. The default behavior is automatic commit and push after every safety gate passes.
+Publish a reviewed source-and-paper snapshot, not a copy of the working directory. By default, retain reproducible code, tests, configs, build files, output-free notebooks, paper sources/PDFs, and referenced figures; exclude generated result/evidence trees.
 
-## Core Rule
+## Core Rules
 
-Separate semantic judgment from deterministic repository operations:
-
-- Read the paper and code to update `README.md` accurately and explain functionality changes.
-- Use `scripts/repo_publish.py` for file discovery, exclusion, secret scanning, `FILES.md`, exact staging, commit, and push.
-- Never claim success without the commit hash and push result returned by the script.
+- The user's latest instruction controls whether data is public. Never relocate an excluded result directory to evade the policy.
+- Use `scripts/repo_publish.py` for discovery, secret scanning, `FILES.md`, exact staging, commit, push, and remote-hash verification.
+- Leave a dirty or diverged source worktree untouched. Build the publication in an isolated worktree or clone.
+- Never create/change a remote, fetch, merge, rebase, force-push, or rewrite history under this skill.
+- Never claim success without the returned local commit, matching remote commit, and tree hash.
 
 ## Workflow
 
-Run every step in order from the target repository root.
+1. **Lock scope and target.** Record the target branch and the newest user decision for:
+   - `paper/results/` and `paper/evidence/`;
+   - `artifacts/`, `outputs/`, checkpoints, and run state;
+   - final PDFs and TeX-referenced figures.
 
-1. Inspect the repository with `git status --short`, `git branch --show-current`, `git remote`, and the relevant paper/code diffs. Do not print remote URLs because they may contain credentials. Require a named branch, configured remote, clean index, no conflicts, and no merge/rebase operation. Do not create a GitHub repository, change remotes, fetch, rebase, merge, or force-push.
-2. Run the non-destructive preparation phase:
+   The bundled policy defaults all generated result/evidence/output trees to excluded. If the user later changes scope, discard the old publication plan and rerun every gate.
+
+2. **Inspect without exposing credentials.**
+
+   ```text
+   git status --short --branch
+   git branch --show-current
+   git remote
+   git ls-remote --heads origin refs/heads/<branch>
+   git ls-files --stage
+   ```
+
+   Do not print remote URLs. Do not trust a stale `refs/remotes/origin/*`. Require a named branch, configured remote, clean index, no conflicts, and no active merge/rebase/cherry-pick. Reject sparse checkout, every `skip-worktree` entry, and every `assume-unchanged` entry: an absent tracked path is not proof that the path will be deleted from the published tree.
+
+   Any mode `160000` entry is a hard block for this source snapshot. The script reports missing or mismatched `.gitmodules` mappings explicitly, but even a valid mapping must be removed or replaced with reviewed vendored source in the isolated publication worktree through a normal commit. Outbound commits are also scanned for gitlinks that were added and later removed.
+
+3. **Run non-destructive preparation.**
 
    ```text
    python <skill-root>/scripts/repo_publish.py prepare --repo . --remote origin
    ```
 
-   Use the bundled Python runtime when the system `python` command is unavailable. Read the JSON report and stop on any blocked path.
+   Stop on any blocked path. Review `included`, `excluded`, `remove_from_git`, and `changes`. Adding a `.gitignore` rule does not remove an already tracked file; the `remove_from_git` list must show that deletion.
 
-3. Review the actual paper source, PDF, figures, bibliography, build files, and experiment entry points. Update `README.md` when it is missing or stale. Preserve useful human-authored sections. Document only commands and prerequisites supported by repository evidence:
+4. **Review the public interface.**
+   - Read the paper, code, tests, configs, and build files before updating `README.md`.
+   - Preserve useful human-authored README sections and link to `FILES.md`.
+   - If a root `Makefile` exists, it is a required deliverable. Verify:
 
-   - project or paper purpose;
-   - source and PDF entry points;
-   - verified LaTeX compilation command and prerequisites;
-   - verified experiment setup and execution command;
-   - repository layout and a link to `FILES.md`.
+     ```text
+     git ls-files --error-unmatch Makefile
+     git check-ignore -v --no-index Makefile
+     ```
 
-4. Rerun `prepare` after any README change. `FILES.md` is generated on every preparation and must contain only publishable files, including `README.md` and itself. It must not list excluded or blocked paths.
-5. Derive the commit message from the final diff. Write it to a UTF-8 temporary file outside the repository. Use this exact structure:
+     The second command must produce no matching ignore rule. `prepare` blocks an ignored root `Makefile` and a tracked `Makefile` missing from the working tree. Ensure `Makefile` appears in `FILES.md` and the final committed tree.
+   - If Makefile targets require excluded result/evidence directories, mark those targets as optional or document their external prerequisite. Do not claim a fresh source-only checkout can run them.
+
+5. **Sanitize publishable notebooks structurally.** Every included `.ipynb` must be a JSON object with `nbformat >= 4`, a non-negative integer `nbformat_minor`, and a valid cells list. Every cell must have a supported `cell_type`, object-valued `metadata`, and string or string-list `source`; code cells additionally require:
+   - `outputs: []` for every code cell;
+   - `execution_count: null`;
+   - no saved widget state;
+   - no machine-specific paths such as `C:\\Users\\...`, `D:\\...`, `/home/<user>/`, or `/Users/<user>/` embedded in cells/metadata. Portable runtime paths such as `/content/drive/...` are allowed when they are part of the documented notebook protocol;
+   - no credentials embedded in cells/metadata.
+
+   Use a notebook/JSON parser, not line-oriented replacement. Missing fields and wrong empty types such as `outputs: {}` are blocks, not equivalents of `outputs: []`. Source arrays are joined before checking machine paths, so splitting a path across fragments does not bypass the gate. The bundled script applies the same structural/state checks to every notebook blob in outbound commits; sanitizing only the latest copy is insufficient. Rerun `prepare` after sanitizing.
+
+6. **Verify the candidate.** Run the repository's locked tests and supported paper/source checks. On Windows, verify hash-sensitive official files from Git blobs or an archive, not a CRLF-converted working copy:
 
    ```text
-   <concise imperative subject>
+   git hash-object --path=paper/aaai2027.sty paper/aaai2027.sty
+   git rev-parse HEAD:paper/aaai2027.sty
+   ```
+
+   Honor committed `.gitattributes` `eol=lf` rules and avoid PowerShell text round-trips for official style files.
+
+7. **Create the exact commit message.** Write UTF-8 without BOM, with LF-only line endings and exactly one terminal LF, to a temporary file outside the repository. `publish` reads the raw bytes and rejects an invalid encoding, BOM, CRLF, missing terminal LF, or an extra blank terminal line:
+
+   ```text
+   <imperative subject, at most 72 characters>
 
    Files:
-   - Added: <paths, or None>
-   - Modified: <paths, or None>
-   - Deleted: <paths, or None>
+   - Added: <comma-separated paths, or None>
+   - Modified: <comma-separated paths, or None>
+   - Deleted: <comma-separated paths, or None>
 
    Changes:
    - <concrete implementation or documentation change>
 
    Features:
-   - <new or changed functionality, or No functional change>
+   - <functionality change, or No functional change>
    ```
 
-   Reconcile every path with the staged diff; do not infer functionality from filenames alone.
-6. Run the publishing phase. This reruns all checks, stages only the approved paths, commits, and pushes the current branch:
+   Use commas, not semicolons. The three file lists must exactly equal the final diff.
+
+8. **Publish.**
 
    ```text
-   python <skill-root>/scripts/repo_publish.py publish --repo . --remote origin --message-file <temp-message-file>
+   python <skill-root>/scripts/repo_publish.py publish --repo . --remote origin --message-file <temp-file>
    ```
 
-7. Report the commit hash, remote name, branch, added/modified/deleted paths, and any excluded paths. Remove the temporary message file after the command succeeds.
+   The script scans the staged Git tree after clean filters run, then scans the committed tree and raw committed message after hooks run but before pushing. It blocks if either tree contains excluded paths, secrets, unsafe notebooks, oversized blobs, external symlinks, or gitlinks; it also requires the committed tree and message to exactly match the approved staged tree and message.
+
+   Require `remote_commit == commit`. Record `tree`, branch, changes, and exclusions. Delete the temporary message only after success.
+
+9. **Audit the pushed tree.**
+
+   ```text
+   git ls-remote --heads origin refs/heads/<branch>
+   git rev-parse HEAD^{tree}
+   git ls-tree -r --name-only HEAD
+   git ls-tree -r HEAD
+   ```
+
+   Verify:
+   - the live remote OID equals the returned commit;
+   - no path matches `(^|/)(results?|evidence|outputs?|artifacts|checkpoints?|run_states?)(/|$)`;
+   - no blocked checkpoint/weight extension or mode `160000` is present;
+   - `Makefile`, expected paper files, and only intended figures are present;
+   - all tracked notebooks remain output-free.
 
 ## File Policy
 
 ### Publish
 
-- Paper sources: `.tex`, `.ltx`, `.bib`, `.bbl`, `.bst`, `.sty`, `.cls`, and related LaTeX support files.
-- Final `.pdf` documents.
-- Referenced figures and assets: common raster/vector image formats, fonts, and small table assets.
-- Experiment source code, notebooks, shell scripts, environment specifications, and configuration files.
-- `README.md`, `FILES.md`, licenses, citation metadata, and reproducibility build files.
+- Root repository metadata and build inputs, including `.gitignore`, `.gitattributes`, `README.md`, `FILES.md`, `Makefile`, lockfiles, environment specs, licenses, and citation metadata.
+- Paper `.tex`, bibliography/style files, final document PDFs, and figures actually referenced by the paper.
+- Experiment/library source, tests, scripts, configs, and output-free notebooks.
+- Small structured assets outside generated result/data directories.
 
 ### Exclude
 
-- LaTeX intermediates: `.aux`, `.log`, `.out`, `.toc`, `.fls`, `.fdb_latexmk`, `.synctex.gz`, `.blg`, and similar generated state.
-- Caches, editor state, bytecode, build directories, package directories, run directories, and generated logs.
-- AI planning/process Markdown such as `AI_PLAN.md`, `TODO.md`, `*_PLAN.md`, `TASKS.md`, `DESIGN.md`, brainstorming notes, and `docs/superpowers/**`. Keep `README.md` and `FILES.md` as explicit exceptions.
-- Untracked files with unsupported types.
+- Entire `paper/results/**`, `paper/evidence/**`, `artifacts/**`, `outputs/**`, `logs/**`, and `run_states/**` trees.
+- LaTeX intermediates, caches, virtual environments, build/package directories, editor/agent state, run state, and generated logs.
+- AI planning/process Markdown such as `TODO.md`, `*_PLAN.md`, `DESIGN.md`, and `docs/superpowers/**`.
+- Unsupported untracked files and placeholders such as unnecessary `.gitkeep` files.
 
-### Block and Stop
+Tracked excluded files are removed from Git's index while their local copies remain.
 
-- `.env` and credential exports, private keys, token files, and high-confidence secret content.
-- Raw datasets, model weights, checkpoints, database files, and files larger than 50 MiB by default.
-- Symlinks that resolve outside the repository.
-- Conflicts, detached HEAD, missing remote, pre-existing staged changes, dirty submodules, or an active merge/rebase.
+### Block And Stop
 
-Do not print secret values. Do not silently override a block. A tracked excluded temporary or planning file is removed from Git's index while its local copy is retained; a tracked blocked file stops the operation.
+- Credentials, private keys, token files, or high-confidence secret content.
+- Raw datasets, model weights, checkpoints, databases, or files over 50 MiB by default. A `checkpoint(s)/` or `weight(s)/` directory blocks publication even when its contents use ordinary extensions such as `.json` or `.yaml`.
+- Symlinks resolving outside the repository.
+- Invalid gitlinks, dirty/uninitialized submodules, conflicts, detached HEAD, pre-staged changes, or active Git operations.
+
+Do not silently override a block or print a secret value.
 
 ## Script Reference
 
-The bundled script is intentionally standard-library-only and has two commands:
-
 | Command | Effect |
 | --- | --- |
-| `prepare` | Validate repository state, discover non-ignored files, scan safety rules, regenerate `FILES.md`, and emit a JSON report. It never stages, commits, or pushes. |
-| `publish` | Repeat preparation checks, validate `README.md` and the structured message, stage the exact approved set, commit, and push `HEAD` to the configured branch. |
+| `prepare` | Validate state/history and Makefile, classify files, scan current and outbound secrets, gitlinks, and notebook state, regenerate `FILES.md`, and emit JSON without staging. |
+| `publish` | Repeat gates, validate README/message, stage exact paths, scan staged blobs, commit, verify hook-stable tree/message, push, query the live remote, and return `commit`, `remote_commit`, and `tree`. |
 
-Use `--max-size-mib N` only when the repository owner has explicitly chosen a different limit. A push failure leaves the local commit intact and never retries destructively.
+Use `--max-size-mib N` only after the owner explicitly changes the limit. A push failure leaves the local commit intact and never retries destructively.
 
 ## Common Mistakes
 
-- Do not use `git add .`, `git add -A`, or a blanket pathspec. The script owns the staging set.
-- Do not put excluded files in `FILES.md` as an informational appendix; the inventory is the publishable set only.
-- Do not invent compile or experiment commands from convention. Say that a command is unavailable when repository evidence is missing.
-- Do not put the commit message file inside the repository.
-- Do not create a remote repository, alter authentication, or print credential-bearing remote URLs as part of this skill.
-- Do not use `--force`, `reset --hard`, history rewriting, or automatic fetch/rebase.
-- Do not report a successful upload before verifying the returned commit hash and push response.
+- Never use `git add .`, `git add -A`, or a blanket pathspec.
+- Do not treat a file's presence on disk as proof it was uploaded; inspect `FILES.md` and `git ls-tree`.
+- Do not put excluded paths in `FILES.md` as an appendix.
+- Do not invent compile/experiment commands or a license.
+- Do not put the commit-message file inside the repository.
+- Do not assume clean filters or Git hooks preserve reviewed content; staged and committed Git objects are the publication boundary.
+- Do not assume a tip deletion purges old blobs. Remote-history purge requires separate explicit authorization and is outside this skill.
+- Do not report success before remote OID and tree verification.
