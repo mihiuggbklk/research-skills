@@ -1,4 +1,4 @@
 interface:
   display_name: "Publish Research to GitHub"
-  short_description: "Safe GitHub publishing for research projects"
-  default_prompt: "Use $publish-research-to-github to publish this paper and experiment repository safely."
+  short_description: "Publish paper, code, and results"
+  default_prompt: "Use $publish-research-to-github to publish this paper, experiment code, and results from the current branch."
