@@ -1,4 +1,4 @@
 interface:
   display_name: "Minimal ML Experiments"
-  short_description: "Build runnable single-notebook ML theory tests"
-  default_prompt: "Use $designing-minimal-ml-experiments to turn this ML claim into one runnable PyTorch notebook."
+  short_description: "Design runnable local/Colab ML theory experiments"
+  default_prompt: "Use $designing-minimal-ml-experiments to build a thin local/Colab PyTorch theory experiment with resumable storage and a validated downloadable result bundle."
