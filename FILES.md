@@ -15,6 +15,7 @@
 | `skills/publish-research-to-github/tests/test_repo_publish.py` | experiment-code | Experiment or project source code |
 | `skills/writing-ai-ml-papers/agents/openai.yaml` | configuration | Build, environment, or repository configuration |
 | `skills/writing-ai-ml-papers/references/article-patterns.md` | documentation | Project documentation |
+| `skills/writing-ai-ml-papers/references/experiment-writing.md` | documentation | Project documentation |
 | `skills/writing-ai-ml-papers/references/section-playbook.md` | documentation | Project documentation |
 | `skills/writing-ai-ml-papers/references/style-rules.md` | documentation | Project documentation |
 | `skills/writing-ai-ml-papers/scripts/audit_paper.py` | experiment-code | Experiment or project source code |
