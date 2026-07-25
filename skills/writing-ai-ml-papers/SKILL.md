@@ -1,6 +1,6 @@
 ---
 name: writing-ai-ml-papers
-description: Use when an English AI or ML manuscript, outline, abstract, introduction, theory section, experiment section, conclusion, or LaTeX draft needs to be written, rewritten, or audited; especially when author voice, argument structure, evidence grounding, or excessive hyphenated compounds are concerns.
+description: Use when an English AI or ML manuscript, outline, abstract, introduction, theory section, theorem, appendix proof, experiment section, conclusion, or LaTeX draft needs to be written, rewritten, completed, or audited; especially when author voice, argument structure, proof integrity, evidence grounding, or excessive hyphenated compounds are concerns.
 ---
 
 # Writing AI and ML Papers
@@ -14,6 +14,7 @@ Build the paper as a chain from question to claim to evidence. Prefer direct fir
 - Read [references/article-patterns.md](references/article-patterns.md) before planning a paper, organizing a theory narrative, or adapting the structure of Li et al. (2025).
 - Read [references/section-playbook.md](references/section-playbook.md) before drafting or revising a specific section.
 - Read [references/experiment-writing.md](references/experiment-writing.md) before drafting or revising an experiment, evaluation, results, ablation, robustness, efficiency, or qualitative section.
+- Read [references/appendix-proofs.md](references/appendix-proofs.md) before drafting, completing, restructuring, or auditing any theorem, lemma, proposition, or appendix proof.
 - Read [references/style-rules.md](references/style-rules.md) before line editing, polishing, or applying the first person and hyphen constraints.
 - Run `python scripts/audit_paper.py PAPER.tex --strict` after revising prose. Use `--format json` for machine readable output and repeat `--allow-hyphen TERM` only for a justified exception.
 
@@ -28,6 +29,8 @@ Inspect all supplied notes, source files, result tables, figures, logs, proofs, 
 Do not invent results, assumptions, comparisons, novelty, significance, citations, or causal explanations. Mark unsupported material as `[EVIDENCE NEEDED]`, `[CITATION NEEDED]`, or `[AUTHOR DECISION NEEDED]`. Fetch and verify citations when tools and sources are available; never create plausible BibTeX from memory.
 
 The evidence ledger may retain local provenance for internal verification. Never copy local paths, raw filenames, scripts, run IDs, hashes, or other workspace metadata into reader facing manuscript text.
+
+For a proof, treat the theorem statement as part of the evidence boundary. Never repair an undefined object, missing assumption, incomplete probability statement, or incorrect quantifier silently. State whether the claim is provable as written and expose every proposed repair as `[AUTHOR DECISION NEEDED]`.
 
 ## Choose the Paper Route
 
@@ -58,7 +61,7 @@ Draft the argument before optimizing the opening. Use this order unless the user
 
 1. Write the setup and evidence bearing sections.
 2. Write the main results and their interpretations.
-3. Write the mechanism, proof overview, ablations, or error analysis.
+3. Write the mechanism, proof overview, appendix proof architecture, ablations, or error analysis.
 4. Write related work around the exact gap.
 5. Write the introduction from the completed claim spine.
 6. Write the abstract last.
@@ -115,6 +118,7 @@ Before delivery:
 - Verify that exhaustive values appear only in tables or figures and that implementation details are routed out of reader-facing prose.
 - Search every reader facing artifact, not only the main prose, for local files, paths, scripts, configuration names, run IDs, hashes, and internal stage labels; remove every occurrence. The prose auditor does not perform this provenance check.
 - Verify that theorem interpretations preserve all conditions and quantifiers.
+- Verify that each proof establishes its exact stated claim without hidden assumptions, undefined events, unclosed cases, or unrecorded limit exchanges.
 - Verify every citation against an external record and the cited claim when citation tools are available.
 - Compile the LaTeX project when compilation is in scope.
 - Report what changed, what was verified, and what evidence remains missing.

@@ -54,6 +54,12 @@ Match the verb to the evidence:
 
 Give each paragraph one main role. Start with the role, place evidence in the middle, and end with the consequence or boundary. Keep old information near the start and new information near the end. Put the subject close to its verb. Split a sentence when notation, conditions, result, and interpretation compete for attention.
 
+## Proof Prose
+
+Use first person for proof actions and author choices: `We condition on...`, `We apply Lemma 2...`, and `We now combine the bounds...`. Use mathematical objects as subjects for mathematical facts: `The matrix is invertible on $\mathcal G$` and `The recursion contracts in this regime`. Announce the subgoal before a dense equation block and state its consequence afterward.
+
+Do not use `clearly`, `obviously`, `similarly`, `by standard arguments`, or `it is easy to see` to hide a nontrivial step. Expand the step or cite the exact earlier lemma that supplies it. Preserve mathematical notation even when the prose rule prefers to avoid hyphenated compounds. See [appendix-proofs.md](appendix-proofs.md) for proof integrity, event, limit, and closure checks.
+
 ## Terminology
 
 Choose one term for each concept and preserve it across prose, equations, figures, and tables. Do not alternate among `example`, `demonstration`, and `context item` unless they denote different objects. Define every acronym once and use it only when repeated often enough to help.

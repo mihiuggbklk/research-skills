@@ -64,6 +64,10 @@ Use `we prove`, `we establish`, or `we characterize`. Preserve quantifiers when 
 
 Name the technical obstacle first. Describe the proof as a small number of conceptual stages, not a list of algebraic operations. State what each lemma establishes and how it enables the next result. Distinguish proof intuition from proof content. Point detailed derivations to the appendix only after the logical route is complete.
 
+## Appendix Proofs
+
+Read [appendix-proofs.md](appendix-proofs.md) before drafting or revising a proof appendix. Check first that the exact claim is provable as stated, and never repair a missing definition or assumption silently. Keep a direct proof concise. For a long proof, align the appendix with the main text overview, expose the dependency map, name probability events, record the order and mode of every limit, and end with an explicit synthesis that recovers the original statement.
+
 ## Experiments
 
 Read [experiment-writing.md](experiment-writing.md) before drafting or revising this section. Use one claim question per experiment block:
