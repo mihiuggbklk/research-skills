@@ -109,6 +109,10 @@ local environment), use authenticated requests, and keep it out of repository
 URLs, saved notebook cells, outputs, logs, and training-child environments.
 Clear temporary authentication state after fetching.
 
+For model-loading APIs that support it, use `dtype=...` rather than the
+deprecated `torch_dtype=...`, preserving the requested precision. Only use a
+legacy argument when the explicitly pinned dependency version requires it.
+
 Generate the launcher from the committed source revision and matching source
 hashes. A pinned notebook does not automatically acquire fixes pushed to main:
 after a source change, update its revision and hashes and deliver the updated

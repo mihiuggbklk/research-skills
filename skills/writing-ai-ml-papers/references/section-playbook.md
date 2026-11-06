@@ -64,17 +64,25 @@ Use `we prove`, `we establish`, or `we characterize`. Preserve quantifiers when 
 
 Name the technical obstacle first. Describe the proof as a small number of conceptual stages, not a list of algebraic operations. State what each lemma establishes and how it enables the next result. Distinguish proof intuition from proof content. Point detailed derivations to the appendix only after the logical route is complete.
 
+## Appendix Proofs
+
+Read [appendix-proofs.md](appendix-proofs.md) before drafting or revising a proof appendix. Check first that the exact claim is provable as stated, and never repair a missing definition or assumption silently. Keep a direct proof concise. For a long proof, align the appendix with the main text overview, expose the dependency map, name probability events, record the order and mode of every limit, and end with an explicit synthesis that recovers the original statement.
+
 ## Experiments
 
-Use one claim question per experiment block:
+Read [experiment-writing.md](experiment-writing.md) before drafting or revising this section. Use one claim question per experiment block:
 
 1. `We ask whether...`
-2. `We vary/evaluate/compare...`
-3. `We observe...` with values, uncertainty, and run count.
-4. `This result supports...` with the exact claim.
+2. State only the protocol needed to judge scope and fairness.
+3. Report the dominant trend with an aggregate, range, coverage count, or representative contrast.
+4. Interpret what the result supports without turning observation into explanation.
 5. State a boundary, alternative explanation, or missing test when relevant.
 
-Report the data split, metric, baseline conditions, compute, number of runs, and uncertainty definition. Never infer significance without a valid test. Treat an ablation as evidence about contribution, not proof of a unique causal mechanism.
+Report the data split, metric, matched baseline conditions, number of runs, and uncertainty definition once. Include compute only when it affects fairness or interpretation. Let tables and figures carry complete values; do not read them aloud in prose or repeat every standard deviation. Route exhaustive values to tables or figures, and route only semantic implementation details or extended interpretation to the appendix or supplementary material.
+
+Do not split one variant or sensitivity family into multiple short paragraphs merely to enumerate its rows; separate blocks must answer distinct claim questions.
+
+Never infer significance without a valid test. Treat an ablation as evidence about contribution, not proof of a unique causal mechanism. Keep contradictions and boundary cases visible. Remove all local paths, filenames, scripts, configuration names, run IDs, hashes, and internal stage labels from every reader facing artifact, including captions, tables, appendices, supplements, and rebuttals.
 
 ## Figures and Tables
 

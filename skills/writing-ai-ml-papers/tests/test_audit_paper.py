@@ -112,6 +112,27 @@ class AuditTextTests(unittest.TestCase):
         self.assertIn(("optional_hyphen", "multi-step"), findings)
         self.assertIn(("optional_hyphen", "inverse-quadratic"), findings)
 
+    def test_flags_passive_or_expletive_author_actions(self):
+        report = audit_text(
+            "It is shown that the estimator converges. "
+            "It can be observed that the error decreases. "
+            "The experiments are conducted on three datasets."
+        )
+        tokens = {
+            finding.token.casefold()
+            for finding in report.findings
+            if finding.code == "impersonal_author_action"
+        }
+
+        self.assertEqual(
+            {
+                "it is shown",
+                "it can be observed",
+                "the experiments are conducted",
+            },
+            tokens,
+        )
+
     def test_does_not_treat_a_cited_study_as_the_current_authors(self):
         report = audit_text(
             "The study shows that accuracy increases with context length."
@@ -204,6 +225,18 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(0, payload["summary"]["actionable_findings"])
+
+    def test_strict_mode_fails_for_passive_author_action(self):
+        result = self.run_audit(
+            "It is shown that the estimator converges.",
+            "--strict",
+            "--format",
+            "json",
+        )
+
+        self.assertEqual(1, result.returncode)
+        payload = json.loads(result.stdout)
+        self.assertEqual(1, payload["summary"]["impersonal_author_actions"])
 
 
 if __name__ == "__main__":

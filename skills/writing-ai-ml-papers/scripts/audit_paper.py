@@ -32,10 +32,16 @@ FIRST_PERSON_ACTION = re.compile(
 )
 
 IMPERSONAL_AUTHOR_ACTION = re.compile(
-    r"\b(?:(?:this|our)\s+(?:paper|work|study)|"
+    r"\b(?:"
+    r"(?:(?:this|our)\s+(?:paper|work|study)|"
     r"the\s+present\s+(?:paper|work|study))\s+"
     r"(?:aims|analy[sz]es|defines|derives|demonstrates|establishes|evaluates|"
-    r"finds|introduces|investigates|observes|presents|proposes|proves|shows|studies)\b",
+    r"finds|introduces|investigates|observes|presents|proposes|proves|shows|studies)"
+    r"|it\s+(?:is|can\s+be)\s+"
+    r"(?:demonstrated|established|found|observed|proved|shown)"
+    r"|the\s+experiments?\s+(?:are|were)\s+"
+    r"(?:conducted|performed|run)"
+    r")\b",
     re.IGNORECASE,
 )
 
