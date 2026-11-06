@@ -1,98 +1,358 @@
 ---
 name: designing-minimal-ml-experiments
-description: Use when turning an AI or machine-learning theory claim into a minimal runnable PyTorch experiment, especially when the user wants one Jupyter notebook, smoke testing, an RTX 4060 run, Colab on A100 or RTX 6000 PRO, Google Drive checkpoints, or resume after disconnects.
+description: Use when turning an AI/ML theory claim into a minimal runnable PyTorch experiment that must work locally and in Colab, especially with thin notebooks, external helpers, Drive resume, visible progress, calibrated scaling, or automatic result-bundle download.
 ---
 
 # Designing Minimal ML Experiments
 
 ## Core Principle
 
-Test one falsifiable claim with the smallest experiment that can distinguish the proposed mechanism from an equal-compute baseline. Optimize for runnable evidence, not project architecture.
+Test one falsifiable mechanism claim with the smallest runnable evidence that
+can distinguish it from a strong equal-compute baseline. Minimal means the
+smallest understandable execution boundary, not necessarily one file. A thin
+notebook plus a few ordinary Python modules is often more minimal than an
+800-line self-contained notebook.
 
-Produce one complete task-specific `.ipynb` by default. Do not stop at an outline, plan, or proposed filename. Do not create auxiliary `.py` files, packages, CI, or dashboards unless one notebook is technically impossible and the user approves the exception. The notebook may import an existing repository when reuse is the shortest correct route.
+Do not build a framework, service, CI system, dashboard, or maintenance layer
+unless the experiment cannot run without it. Keep only helpers that are used by
+the experiment or by its verification.
+
+Keep design, implementation, execution, and verification within the requested
+scope. A request to write or modify code does not by itself request a paid GPU
+run or additional API calls. If the user declines verification, stop pending
+tests, smoke runs, and review passes; finish only the requested edits and any
+already-authorized delivery. Report the unverified scope without asking again
+or treating verification as a prerequisite to delivering the edit.
 
 ## Workflow
 
 ### 1. Freeze The Research Contract
 
-Before writing experiment code, state in the notebook:
+Write the contract before implementation:
 
 | Field | Requirement |
 | --- | --- |
 | Claim | One mechanism-level claim |
-| Prediction | Direction and comparison expected before results |
+| Prediction | Direction and comparison fixed before results |
 | Baseline | Strongest minimal equal-compute alternative |
 | Ablation | Remove only the claimed mechanism |
 | Metrics | Mechanism metric plus task metric |
-| Success | Fixed threshold or ordering |
-| Failure | Meaning of negative or ambiguous evidence |
+| Success | Fixed threshold, ordering, or confidence criterion |
+| Failure | Meaning of negative, null, failed, or incomplete evidence |
+| Scope | Exact dimensions, conditions, tasks, depths, and seed unit |
 
-Operationalize equal compute before running: match examples or tokens, optimizer updates, data order/augmentations, model initialization, and optimizer schedule. Report trainable parameters, examples/tokens, updates, wall time, peak VRAM, and measured or estimated FLOPs when method overhead differs. If exact equality is impossible, name the matched compute axis and quantify the remaining gap.
+Define the inferential unit explicitly. If confidence intervals are across
+independent seeds, preserve that seed count for confirmatory results. Tasks,
+held-out examples, and repeated measurements are nested observations unless
+the design says otherwise; do not count them as extra independent seeds.
 
-Reject post-hoc thresholds, selective reporting, and requests to omit negative runs. Use synthetic data only when it is explicitly the theory probe; never silently substitute it for a requested dataset.
+Operationalize equal compute before running. Match the relevant examples or
+tokens, optimizer updates, data order, initialization, precision, and schedule.
+When exact equality is impossible, name the matched axis and quantify the gap.
+Reject post-hoc thresholds, selective reporting, and requests to omit negative
+or failed runs. Synthetic data is valid only when it is the stated theory
+probe, never as a silent substitute for a requested dataset.
 
-### 2. Build One Self-Contained Notebook
+### 2. Choose The Smallest Artifact Boundary
 
-Use this cell order:
+Use an inline notebook only when the implementation is genuinely short and
+will not be reused. Use a thin notebook plus external Python when the notebook
+would contain repeated storage, progress, calibration, metrics, or plotting
+logic. The external files are ordinary modules, not a new framework.
 
-1. Research contract and limitations.
-2. One config cell with `RUN_TIER = "smoke" | "local" | "colab"` and an explicit `EXPERIMENT_VERSION`.
-3. Environment detection: Colab, Python, PyTorch, CUDA, GPU, total/free VRAM, and BF16.
-4. Minimal dependency bootstrap. Never reinstall local PyTorch or unconditionally upgrade packages; fail clearly when a required dependency cannot be provided.
-5. Local output directory or Colab Google Drive mount. Before a Colab confirmation run, require a successful checkpoint write-reload probe; do not run large jobs without durable storage.
-6. Seeds, deterministic settings where practical, and environment logging.
-7. Data and fixed split/subset rules.
-8. Baseline, proposed method, and mechanism-removing ablation.
-9. Shared train, evaluate, checkpoint, and resume functions.
-10. Tier profiles and local throughput calibration.
-11. Run loop, aggregation, plots, and evidence verdict.
+A useful minimal layout is:
 
-Fill every implementation cell. Deliver no `TODO`, `pass`, fake metric, missing function, or cell requiring manual code completion.
+```text
+src/<package>/
+  colab_runtime/       # only environment, progress, signatures, storage needed
+  experiments/         # one module per experiment
+  metrics.py           # shared metrics only when actually shared
+  plotting.py          # shared plotting only when actually shared
+configs/               # one small YAML/JSON profile per experiment
+notebooks/             # thin launchers and result display
+scripts/run_experiment.py
+```
 
-### 3. Keep Tiers Scientifically Comparable
+Do not create every directory by template. Add only the modules the experiment
+uses. Keep the notebook responsible for settings, repository bootstrap,
+Drive mounting, invoking the runner, displaying results, and downloading the
+validated result bundle. Keep scientific computation, checkpointing, and
+aggregation in importable Python. The local CLI and Colab notebook must call
+the same importable runner/API with the same config schema; only checkout,
+device discovery, storage root, and presentation may differ.
 
-All tiers MUST call the same data semantics, model architecture, method implementation, baseline, ablation, and metrics. Change only samples, steps, micro-batch/accumulation, precision, and seeds. If model scale must change, create a separately signed proxy experiment and never pool or directly compare it with the full-scale confirmation.
+When the user requests Python source files, deliver actual `.py` modules.
+Do not hide the implementation in an encoded/Base64 notebook payload. The
+notebook should fetch or import those same modules and invoke their runner.
+
+### 3. Build A Thin, Dual-Environment Notebook
+
+Keep notebook cells short and deterministic. A practical order is:
+
+1. Contract, scope, limitations, and claim status.
+2. Settings: `RUN_TIER`, `COLAB_PROFILE`, `EXECUTE_EXPERIMENT`,
+   `FORCE_RECALIBRATION`, `EXPERIMENT_VERSION`, and repository ref.
+3. Local/Colab checkout and dependency detection.
+4. Device, CUDA, total/free VRAM, dtype, and environment snapshot.
+5. Local output root or Drive mount plus an atomic write/reload probe.
+6. Plan counts, progress reporter, run, and resume.
+7. Validated summaries, figures, verdict, and result-bundle download.
+
+The default settings may be `RUN_TIER="smoke"` so the notebook is safe to
+open. Make the full run an explicit setting change; never silently execute a
+large CUDA job on a CPU fallback. A local checkout must be reused locally; a
+Colab launcher can fetch the required Python files from a pinned commit or
+clone that revision when a checkout is needed. For a private GitHub repository,
+use the user's configured secret name; in this workflow prefer `GitHub_token`
+and accept `GITHUB_TOKEN` as a fallback. Read it from Colab Secrets (or the
+local environment), use authenticated requests, and keep it out of repository
+URLs, saved notebook cells, outputs, logs, and training-child environments.
+Clear temporary authentication state after fetching.
+
+Generate the launcher from the committed source revision and matching source
+hashes. A pinned notebook does not automatically acquire fixes pushed to main:
+after a source change, update its revision and hashes and deliver the updated
+notebook. Explain when a changed source signature starts a new result directory;
+do not promise that old checkpoints or response caches will resume unchanged.
+
+Return a direct Colab URL for every notebook, for example:
+
+```text
+https://colab.research.google.com/github/<owner>/<repo>/blob/<branch>/notebooks/<name>.ipynb
+```
+
+Include this clickable link in the notebook's opening Markdown cell as well
+as the delivery message. Do not automatically open the notebook or a preview.
+
+### 4. Define Tiers Without Changing The Science
+
+All tiers MUST call the same data semantics, model, method, baseline, ablation,
+metrics, checkpoint format, and aggregation code. Change only an explicitly
+registered scale profile. A changed result-affecting profile is a new signed
+experiment version and cannot be pooled with the old one.
 
 | Tier | Required behavior |
 | --- | --- |
-| `smoke` | Target 1-5 minutes; one seed, tiny subset, and a few steps. Verify data, forward/backward, metric, checkpoint, and resume. Label results diagnostic, never final evidence. |
-| `local` | Target an 8 GB RTX 4060. Inspect free VRAM without killing processes. Prefer BF16 when supported. Warm up past one-time compilation, then measure data plus train steps, a full evaluation, and one checkpoint. Estimate setup plus all variants/seeds/steps/evaluations/checkpoints, multiply by a 1.25 safety factor, and reduce samples, steps, then seeds equally across variants until the estimate is at most 110 minutes. Once started, warn and log if runtime exceeds two hours; NEVER terminate because of elapsed time. |
-| `colab` | Detect A100, RTX 6000 PRO, or other CUDA GPU and scale batch/data/seeds to memory. Mount Drive and assume disconnects. Use the full practical confirmation setting. |
+| `smoke` | CPU-safe or tiny CUDA run, one proxy cell, a few tasks, checkpoint/reload and resume check; diagnostic only |
+| `local` | Smaller diagnostic profile on the available CUDA device; measure memory and throughput; never claim confirmation evidence |
+| `colab` | Confirmation profile on the selected CUDA GPU with Drive persistence, all registered inferential units, and complete result export |
 
-Resolve OOM during the preflight probe when possible. If a formal run OOMs, discard partial gradients, mark that signed attempt failed, clear cached memory, halve the micro-batch, and raise accumulation when possible. Because the result-affecting config changed, create a new `run_id` and restart that seed from its initial state; never continue a mixed trajectory. Declare at most three OOM attempts. On NaN/Inf, preserve the last valid state and diagnostics, then mark the run failed.
+Treat a requested duration such as "about two A100 hours" as a planning
+target, never as a runtime contract. Calibrate a representative profile,
+compare its projection with the user-approved target before formal launch,
+record the estimate and actual time, and let the complete run finish or resume.
+If the projection is materially outside the agreed target, revise and re-sign
+the profile before launch; never adapt it based on elapsed formal-run time.
+Do not add `GPU_HOUR_LIMIT`, `gpu_hour_limit`, `limit_gpu_hours`,
+`rejected_time`, `actual_budget_overrun`, a wall-clock kill switch, or a
+partial-seed timeout branch. Do not add a soft guard or an elapsed-time
+conditional under another name such as `deadline`, `max_seconds`, a timer
+callback, or a scheduler signal. An observational ETA/progress display is
+allowed, but it must not stop, truncate, skip, or alter the denominator. OOM,
+nonfinite values, corrupt state, and unmet hardware/storage prerequisites are
+correctness failures and may stop an affected attempt; they are not time gates.
 
-If a dependency, Drive mount, storage probe, or dataset download fails, report the exact failure and stop the affected run. Never silently switch datasets or turn a persistent Colab confirmation into an ephemeral run.
+### 5. Scale Compute While Preserving Inference
 
-### 4. Implement Exact Resume
+When a confirmation profile is too large, use this order:
 
-In Colab, default to `/content/drive/MyDrive/ml-experiments/<experiment-name>/`. Build a stable `run_id` from `EXPERIMENT_VERSION`, method variant, seed, exact dataset revision and split-index hash, preprocessing, and every result-affecting setting, including precision, micro-batch, and accumulation. Record the notebook or git revision when available and dependency versions. Never resume across a result-affecting signature change.
+1. Enumerate every compute axis and the inferential unit.
+2. Preserve the independent seed count and condition axes required by the
+   claim. If the contract says 12 seeds, encode the exact 12-seed list and test
+   it. Do not halve confirmatory seeds just because they are easy to remove.
+3. Reduce redundant dimensions, task count, held-out examples, depth, or
+   exploratory condition levels according to the claim and a declared compute
+   proxy. Keep the minimum contrast needed to distinguish the mechanism.
+4. Compute current/candidate ratios before coding. For matrix experiments,
+   include terms such as fit cost proportional to `D^2 * M` or `D^3`, plus
+   inference cost proportional to tasks, held-out examples, context, depth,
+   modes, and chunks. State the resulting counts (blocks, trajectories,
+   rows, endpoints) in config tests.
+5. Update the claim scope, `EXPERIMENT_VERSION`, protocol hash, and Drive
+   namespace. Never let old checkpoints resume into a changed grid.
+6. Calibrate on the actual target GPU and report `estimated_gpu_hours`,
+   `safety_adjusted_gpu_hours`, and `actual_gpu_hours` as descriptive metadata.
 
-Each checkpoint MUST contain:
+If fewer seeds are scientifically acceptable only for exploration, label that
+profile exploratory and exclude it from paper-level confidence intervals. Do
+not silently pool a reduced profile with a full profile. Removing a
+claim-critical condition axis creates a newly scoped claim or an exploratory
+profile, never the originally registered confirmation.
 
-- model, optimizer, scheduler, and AMP scaler state;
-- epoch, global step, best/latest evaluation, every online metric accumulator or raw-log cursor used in final evidence, exact deterministic batch-plan identity, committed consumed-batch cursor, and DataLoader generator state;
-- Python, NumPy, CPU PyTorch, and all CUDA RNG states;
-- normalized config, data/code/environment signatures, and `run_id`.
+### 6. Calibrate Memory And Throughput
 
-Checkpoint only immediately after an optimizer update and `zero_grad`, never mid-accumulation. The committed cursor MUST count batches actually consumed through that boundary, never batches merely yielded or prefetched. Default to `num_workers=0` for exact resume; with workers, use an immutable batch-index plan plus a separately committed consumed-batch index, and make transforms stateless from seed/epoch/sample index. Write versioned checkpoints to a temporary sibling, close it, commit with `os.replace`, write a SHA-256 sidecar, and reload-validate schema, signature, and checksum. Keep at least one previous valid generation. Treat the completion manifest identically: version it, checksum it, reload-validate it, retain a prior generation, and update it only after checkpoint/final metrics are durable. On recovery, scan manifest and checkpoint generations newest to oldest; never skip from corrupt or unvalidated metadata, and fail explicitly if no valid matching state exists. Skip only completed runs whose stored signature exactly matches. Write compact checkpoints and metrics to Drive; do not stream large datasets or per-step logs there.
+Before formal execution, record GPU name, total/free VRAM, compute capability,
+dtype, and framework versions. Probe the largest registered fit shape and the
+largest reused/fresh inference shapes. Record `peak_vram_gib` or
+`peak_memory_bytes` for each probe and the calibration duration.
 
-### 5. Produce A Grounded Verdict
+The main profile should rely on the measured probe rather than an arbitrary
+hard-coded VRAM number. An explicitly separate high-memory extension may have
+its own prerequisite (for example, a larger-dimension profile requiring a
+large-VRAM GPU), but it must not silently change the main profile.
 
-Save raw per-run metrics plus CSV/JSON summaries. Report uncertainty appropriate to the paired design, such as per-seed deltas with mean and standard deviation or confidence interval. Predeclare the minimum dataset/step scale and paired seed count required for confirmation. Smoke is diagnostic and does not classify the claim. Local is provisional unless it meets that unchanged confirmation contract; a calibrated-down local run cannot claim `supported`. Colab is the default confirmation tier. At confirmation scale, classify the claim as `supported`, `partially supported`, or `not supported`, tied only to the predeclared criterion. Preserve negative and failed runs.
+On OOM, discard uncommitted work, record a failed signed attempt, clear the
+CUDA cache, and retry with a smaller task chunk when the protocol allows it.
+Give each changed attempt a new `run_id`; never mix chunks produced with
+different result-affecting settings. Allow at most three attempts for one
+unit. Stop a profile that cannot fit its solve or has an unmet hardware
+prerequisite. Do not silently shrink the scientific grid or fall back to CPU.
 
-Run the smoke tier when execution is authorized and feasible. Otherwise state exactly what was not run and how to execute it; never imply success from unexecuted cells.
+### 6a. Bound Iterative Optimizer Work
+
+For natural-gradient CG, register a finite `cg_max_iterations` separately from
+the residual tolerance. In the iteration-limited workflow used here, the
+default cap is 100: stop early if the tolerance is met; otherwise use the
+current finite iterate at the cap and continue through the existing update
+and step-size logic. Do not raise solely because `cg_converged` is false, and
+do not leave a second residual-threshold rejection later in the update path.
+Use a different policy when the user or the mathematical task explicitly
+requires a converged solve; this convention does not apply to every solver.
+
+Retain existing NaN/Inf, invalid-curvature, and step-acceptance handling.
+Record the actual iteration count, cap, tolerance, true relative residual,
+`cg_converged`, and whether a truncated direction was used. Do not relabel a
+capped solve as converged, automatically increase its iteration budget, loosen
+the tolerance, or switch optimizers. Include the iteration count and residual
+in the visible log message, not only in hidden structured fields.
+
+### 7. Sign, Store, And Resume Exactly
+
+Build a canonical scientific execution signature from:
+
+- experiment name and version;
+- full effective config, including dimensions, tasks, held-out examples,
+  conditions, depth, chunking, dtype, and analysis settings;
+- source-file hashes for every imported experiment/runtime/metric module;
+- data or task-generator version and split/index hashes;
+- the exact seed panel and inferential unit;
+- result-affecting numerical settings such as dtype and deterministic flags.
+
+Keep volatile observations such as free VRAM, wall time, and device load out of
+the scientific identity. Record them in the environment snapshot. Define a
+separate resume-compatibility contract for hardware/runtime fields: include a
+field only when changing it can alter the numerical trajectory. A compatible
+Colab reconnect may resume; an incompatible dtype, determinism, or required
+compute-capability change starts a new signed attempt. Never use the git SHA or
+GPU name alone as the scientific signature.
+
+Use a versioned Drive root such as:
+`/content/drive/MyDrive/ml-experiments/<experiment>/<version>/`. Keep the
+execution signature below that root. A result-affecting change creates a new
+version or namespace; exact matching signatures alone may resume.
+
+Write checkpoints, manifests, and result tables to a temporary sibling, close
+them, atomically replace the destination, write a SHA-256 sidecar, and reload-
+validate. Retain at least one previous valid generation and recover newest to
+oldest. A checkpoint must include all applicable mutable algorithm state
+(model, optimizer, scheduler, and scaler only when present), progress and raw-
+log cursors, exact batch-plan identity, config/source/environment signatures,
+and Python/NumPy/CPU/CUDA RNG states. Checkpoint only at a committed update
+boundary. Default to `num_workers=0` for exact replay; workers require an
+immutable batch-index plan, a separately committed consumed index, and
+stateless transforms. Never treat a partial or corrupt artifact as a completed
+seed.
+
+### 8. Show Progress And Export A Validated Bundle
+
+Show progress at run, phase, and chunk level. Include completed/total counts,
+elapsed time, ETA, mode, and peak VRAM when available. Persist the same events
+to the output root so a disconnected notebook can be audited.
+
+After complete result validation, create one deterministic ZIP containing the
+completion manifest, checksums, effective config, raw/summary tables, verdict,
+and figures. Exclude tokens, credentials, checkpoints, and unnecessary large
+intermediate arrays. The final notebook cell must automatically download the
+validated ZIP in Colab and print its absolute path locally:
+
+```python
+from pathlib import Path
+
+bundle_value = result.get("bundle_path")
+if result.get("execution") == "complete" and bundle_value:
+    bundle = Path(bundle_value)
+    if not validate_result_bundle(bundle):
+        raise RuntimeError(f"invalid result bundle: {bundle}")
+    if IN_COLAB:
+        from google.colab import files
+        files.download(str(bundle))
+    else:
+        print(f"Result bundle: {bundle.resolve()}")
+```
+
+Never download an incomplete or checksum-invalid bundle. Drive remains the
+authoritative copy when browser download is blocked or interrupted.
+`validate_result_bundle` must verify the completion manifest, required member
+set, every member checksum, matching experiment version and execution
+signature, exactly one completed result for every expected seed-condition
+unit, and the absence of credentials and checkpoints. Reopening the ZIP alone
+is not sufficient validation.
+
+### 9. Produce A Grounded Verdict
+
+Save raw per-run metrics plus compact CSV/JSON summaries. Use paired deltas,
+seed-level uncertainty, and familywise correction appropriate to the design.
+Declare the minimum seed count, scope, and criterion before execution. Smoke
+and local results are diagnostic/provisional unless they satisfy the unchanged
+confirmation contract. At confirmation scale classify the claim as
+`supported`, `partially supported`, or `not supported`, and preserve negative,
+failed, incomplete, and right-censored records.
+
+Never imply success from an unexecuted notebook. State which tier actually ran,
+which scope it covers, and where the validated bundle was saved/downloaded.
+
+## Verification Checklist
+
+Apply this section only when verification is in scope and the user has not
+declined it. Select checks appropriate to the change rather than running every
+available test, audit, and live environment by default. For substantive
+implementation work, useful high-risk contracts include:
+
+- profile values and registered counts are exact;
+- changed profiles have a new version/storage namespace;
+- execution and protocol signatures include all result-affecting inputs;
+- forbidden time-admission fields are absent, and injecting very large
+  estimated/actual hours cannot change admission, truncate work, or skip units;
+- smoke runs through the same CLI and completes with visible progress;
+- notebook settings, private bootstrap, local/Colab branches, Drive path,
+  seven-cell-or-similar thin structure, and automatic bundle download are
+  present;
+- an interrupted run resumes to the same terminal result as an uninterrupted
+  run: exact equality under deterministic execution, or a predeclared numeric
+  tolerance plus identical completeness/signatures otherwise;
+- aggregation rejects missing, duplicate, or mismatched inferential units;
+- ZIP validation rejects missing members, bad checksums, signature/version
+  mismatches, missing/duplicate seed-condition units, credentials, and
+  checkpoints;
+- the relevant compilation, focused regression, or end-to-end smoke check
+  passes; broaden only for a concrete unresolved concern.
+
+When execution is authorized, a smoke run can exercise the shared runner.
+Live Colab access alone does not authorize an additional GPU run, paid API
+call, or browser interaction. State which paths were actually exercised and
+which were not. If the user says not to verify, skip these checks and do not
+claim they passed. A passing structural test is not a scientific result; a
+passing smoke run is not confirmation evidence.
 
 ## Compact Example
 
-For a gradient-alignment claim, compare equal-compute naive gradient summation against the proposed alignment rule, and ablate only the alignment operation. Measure conflicting-gradient rate and held-out accuracy. Predeclare that support requires both lower conflict and a positive paired accuracy delta across seeds; a positive smoke run alone is diagnostic.
+For a prompt-reuse theory claim, keep a thin launcher notebook and put the
+registered plan, fit/evaluate code, metrics, progress, storage, and plotting
+in small external modules. Retain all independent seeds, reduce task and
+held-out counts only after computing the workload ratio, bump the version and
+Drive namespace, calibrate the largest shape, run the complete profile, and
+download the validated result ZIP from the final Colab cell.
 
 ## Common Failures
 
 | Failure | Correction |
 | --- | --- |
-| Returning only a design or filename | Create the complete notebook artifact. |
-| Changing the method across tiers | Change scale only. |
-| Killing a local run at two hours | Calibrate before launch; warn after launch. |
-| Saving model weights only | Save optimizer, scaler, progress, RNG, config, and manifest too. |
-| Treating Smoke as paper evidence | Confirm at justified local/Colab scale. |
-| Hiding negative evidence | Preserve it and weaken or reject the claim. |
+| One giant notebook because "minimal" means one file | Use a thin launcher and only the external modules that remove real duplication |
+| Hard two-hour timeout or partial-seed stop | Treat duration as a measured planning target; finish/resume complete units |
+| Halving confirmatory seeds first | Preserve the independent inferential unit; reduce redundant workload axes first |
+| Old checkpoints reused after scale changes | Bump version and namespace; require exact signatures |
+| Notebook only works in Colab or only locally | Use one runner with explicit local/Colab checkout and device branches |
+| No visible progress or downloadable artifact | Emit run/phase/chunk progress and auto-download only a validated ZIP |
+| CPU fallback after CUDA failure | Report the prerequisite failure and stop that tier |
+| Adding a framework, service, or dashboard | Keep the smallest ordinary modules that make the experiment runnable |
+| Claiming support from smoke or an unexecuted cell | Tie the verdict to the predeclared confirmation contract |
