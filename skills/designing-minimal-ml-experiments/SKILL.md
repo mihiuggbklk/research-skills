@@ -216,11 +216,17 @@ CPU use for tokenization, text processing, API calls, checkpoint serialization,
 and final artifact export is separate from numerical CPU offload.
 
 Use the actual GPU capacity stated by the user when setting generation and
-evaluation batch sizes. For the A100 80GB workflow, batch 16 replaces the prior
-batch 4 setting; keep these values configurable for other hardware. Changing
-batch size does not change total requested samples. Record a changed execution
-signature and report the settings without claiming measured memory or speed
-unless execution was authorized and those measurements were actually obtained.
+evaluation batch sizes. With ample memory, spend the available budget on larger
+batches, device-resident intermediates, and larger compute chunks; reduce
+activation checkpointing recomputation when the intended workload permits it.
+Retain an explicit configurable memory reserve. For this A100 80GB workflow,
+use batch 32, Fisher logits token chunks of 128, no activation checkpointing,
+and an 8 GiB reserve. A PyTorch allocator budget based on current free memory
+minus that reserve does not bound every CUDA allocation. Other hardware needs
+its own settings; do not call an unmeasured configuration optimal or guaranteed
+to fit. Changing batch size does not change total requested samples. Record a
+changed execution signature and report the settings without claiming measured
+memory or speed unless execution was authorized and actually measured them.
 
 ### 6a. Bound Iterative Optimizer Work
 
