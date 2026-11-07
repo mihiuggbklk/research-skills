@@ -161,9 +161,12 @@ correctness failures and may stop an affected attempt; they are not time gates.
 When a confirmation profile is too large, use this order:
 
 1. Enumerate every compute axis and the inferential unit.
-2. Preserve the independent seed count and condition axes required by the
-   claim. If the contract says 12 seeds, encode the exact 12-seed list and test
-   it. Do not halve confirmatory seeds just because they are easy to remove.
+2. Preserve the seed count and condition axes in the currently agreed
+   contract. If the user explicitly requests one training seed, encode one
+   seed and update the workload and interpretation accordingly; do not add
+   repeated runs just to satisfy a multi-seed template. Separate initialization,
+   sampling, and calibration RNG seeds do not themselves create extra training
+   trajectories. Do not silently reduce or expand the requested seed panel.
 3. Reduce redundant dimensions, task count, held-out examples, depth, or
    exploratory condition levels according to the claim and a declared compute
    proxy. Keep the minimum contrast needed to distinguish the mechanism.
@@ -201,6 +204,23 @@ Give each changed attempt a new `run_id`; never mix chunks produced with
 different result-affecting settings. Allow at most three attempts for one
 unit. Stop a profile that cannot fit its solve or has an unmet hardware
 prerequisite. Do not silently shrink the scientific grid or fall back to CPU.
+
+When the user specifies ample GPU memory and requests GPU computation, keep
+training tensor operations on that GPU: gradients, CG vectors and reductions,
+Fisher anchors/products, JVP/VJP intermediates, and temporary update/rollback
+weights. Setting `cpu_offload=False` alone is insufficient if helper functions
+still call `.cpu()` or construct CPU tensors in the hot path. Aggregate scalar
+reductions on the GPU before transferring logging/control values, and avoid
+per-block or per-token host synchronization where the algorithm permits it.
+CPU use for tokenization, text processing, API calls, checkpoint serialization,
+and final artifact export is separate from numerical CPU offload.
+
+Use the actual GPU capacity stated by the user when setting generation and
+evaluation batch sizes. For the A100 80GB workflow, batch 16 replaces the prior
+batch 4 setting; keep these values configurable for other hardware. Changing
+batch size does not change total requested samples. Record a changed execution
+signature and report the settings without claiming measured memory or speed
+unless execution was authorized and those measurements were actually obtained.
 
 ### 6a. Bound Iterative Optimizer Work
 
