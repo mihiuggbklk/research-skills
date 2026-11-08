@@ -128,6 +128,37 @@ https://colab.research.google.com/github/<owner>/<repo>/blob/<branch>/notebooks/
 Include this clickable link in the notebook's opening Markdown cell as well
 as the delivery message. Do not automatically open the notebook or a preview.
 
+### 3a. Adapt To The Actual Colab Runtime
+
+Inspect the target session before choosing dependencies: Python, OS, installed
+package versions, `torch.version.cuda`, GPU name, compute capability, and
+total/free VRAM. A GPU model does not identify its software image. Use official
+Colab snapshots as supporting evidence, not a replacement for session output;
+do not request metadata again when the user has already provided it.
+
+Prefer the working Colab Python/PyTorch/CUDA/Hugging Face stack. Run experiment
+children with `sys.executable`; install only missing, compatible dependencies.
+Do not automatically download an older interpreter or apply an old requirements
+file that downgrades the native stack. Use an isolated environment when a
+demonstrated dependency conflict or the requested reproduction requires it.
+For a small known dependency set, `pip --no-deps` can protect the existing stack
+after checking its transitive requirements; it is not a substitute for that
+check. Report installed-version conflicts instead of silently replacing them.
+
+Save actual versions before and after setup, preserve visible/redacted setup
+errors, and bind numerical resume to the recorded software environment. On
+drift, name the changed fields and retain saved results. CPU-only analysis and
+GPU training can have separate runtime contracts. Keep volatile memory usage
+out of those contracts. A download 504 alone does not prove that the default
+Python or GPU stack is incompatible.
+
+For this workflow's observed RTX PRO 6000 environment, missing grader packages,
+and Transformers 5 / PEFT / JVP compatibility pitfalls, read
+[references/colab-runtime.md](references/colab-runtime.md). Treat its dated
+versions as a reference, not mandatory installation pins for future sessions.
+When verification is in scope, exercise the affected APIs on a small local
+model and distinguish CPU library checks from actual target-GPU validation.
+
 ### 4. Define Tiers Without Changing The Science
 
 All tiers MUST call the same data semantics, model, method, baseline, ablation,
@@ -219,12 +250,16 @@ Use the actual GPU capacity stated by the user when setting generation and
 evaluation batch sizes. With ample memory, spend the available budget on larger
 batches, device-resident intermediates, and larger compute chunks; reduce
 activation checkpointing recomputation when the intended workload permits it.
-Retain an explicit configurable memory reserve. For this A100 80GB workflow,
-use batch 32, Fisher logits token chunks of 128, no activation checkpointing,
-and an 8 GiB reserve. A PyTorch allocator budget based on current free memory
-minus that reserve does not bound every CUDA allocation. Other hardware needs
-its own settings; do not call an unmeasured configuration optimal or guaranteed
-to fit. Changing batch size does not change total requested samples. Record a
+Retain an explicit configurable memory reserve; this workflow has used 8 GiB.
+Choose generation batches from actual free memory, prompt/output lengths, KV
+cache and attention/workspace estimates, a margin, and the remaining requested
+samples. Do not carry an old A100 batch of 32 onto an RTX PRO 6000 as a
+universal limit, or assume a batch ceiling will fit every input. Keep training
+reward/Fisher sample counts separate from execution batching; do not change
+the objective to fill VRAM. Changing execution batches must preserve total
+requested samples. A PyTorch allocator budget based on current free
+memory minus the reserve does not bound every CUDA allocation. Do not call an
+unmeasured configuration optimal or guaranteed to fit. Record a
 changed execution signature and report the settings without claiming measured
 memory or speed unless execution was authorized and actually measured them.
 
